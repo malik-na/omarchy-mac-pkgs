@@ -38,8 +38,12 @@ The initramfs is systemd-based. Omarchy sets the platform's baseline of mkinitcp
 
 - `MODULES` entries for the Apple keyboard and trackpad drivers, added only when the running kernel really has them as modules, so a kernel that builds a driver in does not break a later `mkinitcpio -P`;
 - a vendor firmware service that copies Apple firmware onto the root, and a second copy before `cryptsetup-pre.target` on encrypted Macs, so Wi-Fi and input work at the passphrase prompt;
-- a Plymouth drop-in, so the passphrase prompt is graphical;
+- Apple conversion and unlock hooks; Plymouth comes from Omarchy's shared platform baseline, so the passphrase prompt remains graphical;
 - the `kmod-static-nodes` ordering fix that btrfs roots need on Apple hardware.
+
+The matching settings package supplies the baseline required by the boot package. Apple fragments leave other platforms unchanged, and keep a legacy busybox `encrypt` configuration on its existing unlock mechanism. Latin keyboard layouts reach the disk prompt through the shared console policy; a non-Latin layout keeps the prompt on the US map so a Latin passphrase remains typeable. Rebuilding with an undetermined platform stops with an error instead of dropping Apple unlock hooks.
+
+With a non-Latin layout, a systemd Mac uses a text disk-unlock prompt rather than Plymouth, whose hook would otherwise bundle that non-Latin console file. After unlock, the desktop uses the owner's selected layout as usual.
 
 ## Encryption
 

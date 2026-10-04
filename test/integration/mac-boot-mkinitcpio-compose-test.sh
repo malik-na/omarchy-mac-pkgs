@@ -20,11 +20,15 @@ chmod +x "$tmp/bin/modinfo"
 
 # The drop-ins read /etc/vconsole.conf; point them at a fixture.
 compose() {
-  local stock=$1 config=$tmp/buildconfig conf
+  local stock=$1 platform=${2:-apple-silicon} include_package=${3:-1} detector=${4:-present} config=$tmp/buildconfig conf path
   local -a conf_files=()
   mkdir -p "$tmp/conf.d"
   rm -f "$tmp/conf.d"/*.conf
-  cp "$ROOT"/etc/mkinitcpio.conf.d/*.conf "$BOOT"/files/etc/mkinitcpio.conf.d/*.conf "$tmp/conf.d/"
+  fake_platform "$tmp/platform" "$platform"
+  cp "$ROOT"/etc/mkinitcpio.conf.d/*.conf "$tmp/conf.d/"
+  if (( include_package )); then
+    cp "$BOOT"/files/etc/mkinitcpio.conf.d/*.conf "$tmp/conf.d/"
+  fi
   sed -i "s|/etc/vconsole.conf|$tmp/vconsole.conf|g" "$tmp/conf.d"/*.conf
   printf 'MODULES=()\nBINARIES=()\nFILES=()\nHOOKS=(%s)\n' "$stock" >"$config"
   mapfile -d '' conf_files < <(LC_ALL=C.UTF-8 find "$tmp/conf.d" -maxdepth 1 -xtype f -name '*.conf' -print0 |
@@ -32,9 +36,11 @@ compose() {
   for conf in "${conf_files[@]}"; do
     cat -- "$tmp/conf.d/$conf" >>"$config"
   done
-  OMARCHY_PROC_ROOT="$tmp/platform/proc" PATH="$tmp/bin:$tmp/platform/bin:$ROOT/bin:$PATH" "$BASH" -c '
+  path=$tmp/bin:$tmp/platform/bin:$ROOT/bin:$PATH
+  [[ $detector != "missing" ]] || path=$tmp/bin
+  OMARCHY_PROC_ROOT="$tmp/platform/proc" KERNELVERSION=fixture PATH="$path" "$BASH" -c '
     . "$1" || exit 1
-    printf "HOOKS=%s\nFILES=%s\n" "${HOOKS[*]}" "${FILES[*]}"
+    printf "HOOKS=%s\nFILES=%s\nMODULES=%s\n" "${HOOKS[*]}" "${FILES[*]}" "${MODULES[*]}"
   ' -- "$config"
 }
 
@@ -50,7 +56,9 @@ pass "on the platform baseline the Apple drop-ins add firmware, conversion and s
 
 printf 'KEYMAP=ru\nXKBLAYOUT=ru\n' >"$tmp/vconsole.conf"
 out=$(compose "$stock") || fail "a non-Latin layout sources cleanly"
-[[ $(sed -n 's/^HOOKS=//p' <<<"$out") == "${apple/ sd-vconsole / }" && $(sed -n 's/^FILES=//p' <<<"$out") != *vconsole* ]] ||
+non_latin=${apple/ sd-vconsole / }
+non_latin=${non_latin/ plymouth / }
+[[ $(sed -n 's/^HOOKS=//p' <<<"$out") == $non_latin && $(sed -n 's/^FILES=//p' <<<"$out") != *"vconsole"* ]] ||
   fail "a non-Latin layout stays out of the image" "$out"
 pass "a non-Latin layout keeps the prompt on the US map"
 
@@ -59,3 +67,29 @@ printf 'KEYMAP=dk-latin1\nXKBLAYOUT=dk\n' >"$tmp/vconsole.conf"
 out=$(compose "$legacy") || fail "a legacy line sources cleanly"
 [[ $(sed -n 's/^HOOKS=//p' <<<"$out") == "$legacy" ]] || fail "a busybox encrypt Mac keeps its own HOOKS" "$out"
 pass "a legacy busybox encrypt Mac keeps its line"
+
+printf 'KEYMAP=dk-latin1\nXKBLAYOUT=dk\n' >"$tmp/vconsole.conf"
+out=$(compose "$stock") || fail 'a Latin layout composes with the baseline'
+read -ra bundled <<<"$(sed -n 's/^FILES=//p' <<<"$out")"
+copies=0
+for file in "${bundled[@]}"; do
+  [[ $file != "$tmp/vconsole.conf" ]] || copies=$((copies + 1))
+done
+(( copies == 1 )) || fail 'the shared console policy bundles vconsole.conf once' "$out"
+pass 'the shared console policy is the only explicit file bundler'
+
+for platform in generic generic-aarch64 qualcomm; do
+  for layout in dk ru; do
+    printf 'KEYMAP=%s\nXKBLAYOUT=%s\n' "$layout" "$layout" >"$tmp/vconsole.conf"
+    expected=$(compose "$stock" "$platform" 0) || fail 'the non-Apple baseline composes'
+    out=$(compose "$stock" "$platform") || fail 'non-Apple composition with the package succeeds'
+    # shellcheck disable=SC2053 # The fixture paths and hook names contain no glob syntax.
+    [[ $out == $expected ]] || fail 'the Apple package changes nothing on another platform' "$platform: $out"
+  done
+done
+pass 'HOOKS, MODULES and FILES are unchanged off Apple Silicon for Latin and non-Latin layouts'
+
+printf 'KEYMAP=dk-latin1\nXKBLAYOUT=dk\n' >"$tmp/vconsole.conf"
+out=$(compose "$stock" apple-silicon 1 missing) || fail 'a baseline without a detector still composes for the Mac package'
+[[ $out == *' asahi omarchy-vendorfw '* ]] || fail 'a missing detector retains Apple firmware on the actual fallback baseline' "$out"
+pass 'the full missing-detector baseline retains Apple firmware hooks'

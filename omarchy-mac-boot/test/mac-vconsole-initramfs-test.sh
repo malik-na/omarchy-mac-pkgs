@@ -62,9 +62,9 @@ vconsole KEYMAP=dk-latin1 XKBLAYOUT=dk XKBMODEL=pc105
 mapfile -t out < <(after "$dropin" "${stock[@]}")
 [[ ${out[0]} == 0 ]] || fail "the drop-in sources cleanly" "status ${out[0]}"
 [[ ${out[1]} == "${stock[*]}" ]] || fail "a stock line keeps sd-vconsole right after keyboard" "HOOKS=(${out[1]})"
-[[ ${out[2]} == "$vconsole_conf" ]] || fail "a Latin layout bundles /etc/vconsole.conf" "FILES=(${out[2]})"
+[[ -z ${out[2]} ]] || fail "the shared policy owns explicit console-file bundling" "FILES=(${out[2]})"
 [[ -z ${out[3]} ]] || fail "the drop-in leaves no variable behind" "${out[3]}"
-echo 'ok - Danish: sd-vconsole stays after keyboard and vconsole.conf is bundled (an exported XKBLAYOUT does not leak in)'
+echo 'ok - Danish: sd-vconsole stays after keyboard and shared policy owns the file'
 
 mapfile -t out < <(after "$dropin" base systemd autodetect keyboard block filesystems)
 [[ ${out[1]} == "base systemd autodetect keyboard sd-vconsole block filesystems" ]] ||
@@ -73,15 +73,15 @@ mapfile -t out < <(after "$dropin" base systemd sd-vconsole block keymap console
 [[ ${out[1]} == "base systemd sd-vconsole block filesystems" ]] ||
   fail "without keyboard, sd-vconsole lands once after systemd; busybox keymap/consolefont go" "HOOKS=(${out[1]})"
 mapfile -t out < <(after "$dropin $dropin" "${stock[@]}")
-[[ ${out[1]} == "${stock[*]}" && ${out[2]} == "$vconsole_conf $vconsole_conf" ]] ||
+[[ ${out[1]} == "${stock[*]}" && -z ${out[2]} ]] ||
   fail "sourcing twice never duplicates the hook" "HOOKS=(${out[1]}) FILES=(${out[2]})"
 echo 'ok - a systemd line gets sd-vconsole exactly once, after keyboard or systemd'
 
 busybox=(base udev autodetect keyboard keymap block encrypt filesystems fsck)
 mapfile -t out < <(after "$dropin" "${busybox[@]}")
-[[ ${out[1]} == "${busybox[*]}" && ${out[2]} == "$vconsole_conf" ]] ||
-  fail "a busybox cryptdevice= line keeps its hooks and gets the file for Plymouth" "HOOKS=(${out[1]}) FILES=(${out[2]})"
-echo 'ok - a busybox (cryptdevice=) line is left alone apart from the file'
+[[ ${out[1]} == "${busybox[*]}" && -z ${out[2]} ]] ||
+  fail "a busybox cryptdevice= line keeps its hooks and shared policy owns the file" "HOOKS=(${out[1]}) FILES=(${out[2]})"
+echo 'ok - a busybox (cryptdevice=) line is left alone'
 
 vconsole KEYMAP=ru XKBLAYOUT=ru,us
 mapfile -t out < <(after "$dropin" "${stock[@]}")
@@ -100,7 +100,7 @@ echo 'ok - without vconsole.conf the line is unchanged and nothing is bundled'
 
 # The whole Mac chain over the stock line: 90 → 94, as mkinitcpio sources them.
 vconsole KEYMAP=dk-latin1 XKBLAYOUT=dk
-chain="$confd/90-omarchy-mac.conf $confd/91-omarchy-mac-encrypt.conf $confd/93-omarchy-mac-plymouth.conf $dropin"
+chain="$confd/90-omarchy-mac.conf $confd/91-omarchy-mac-encrypt.conf $dropin"
 mapfile -t out < <(after "$chain" base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
 [[ ${out[1]} == *"keyboard sd-vconsole block"* && ${out[1]} == *"sd-encrypt filesystems"* ]] ||
   fail "the full Mac chain ends with sd-vconsole after keyboard and sd-encrypt before filesystems" "HOOKS=(${out[1]})"
@@ -184,9 +184,8 @@ fi
   fail "the failure names the XKB layout" "$loads"
 echo 'ok - the boot image check proves a real Danish image loads its keymap and XKB layout from its own files'
 
-# Arch's plymouth hook bundles a non-empty /etc/vconsole.conf by itself, so the
-# Russian image is built without it to check what the drop-in leaves out.
-sed -i 's/^HOOKS=.*/HOOKS=(base systemd)/' /etc/mkinitcpio.conf
+# Keep the production Plymouth baseline: the Apple layout guard must stop its
+# hook from reintroducing a non-Latin console file into the unlock image.
 vconsole KEYMAP=ru XKBLAYOUT=ru
 build russian
 [[ ! -e $tmp/russian/etc/vconsole.conf ]] || fail "a Russian image carries no vconsole.conf"

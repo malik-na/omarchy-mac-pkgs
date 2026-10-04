@@ -10,6 +10,7 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/runtime-test.sh"
 # same layout, since the disk password is also the login password.
 
 require_command lua
+require_platform_fixtures 'the baseline and Apple keyboard layout'
 
 tmpdir=$(mktemp -d)
 unset LUA_INIT LUA_INIT_5_5 LUA_INIT_5_4
@@ -22,23 +23,24 @@ XKBMODEL=pc105
 XKBOPTIONS=terminate:ctrl_alt_bksp'
 printf '%s\n' "$danish" >"$tmpdir/vconsole.conf"
 
-# Initramfs: the Mac chain over the stock HOOKS line, reading this vconsole.conf.
+# Initramfs: the runtime baseline and Mac chain read the same vconsole.conf.
 confd=$BOOT/files/etc/mkinitcpio.conf.d
 mkdir -p "$tmpdir/confd"
-for file in "$confd"/*.conf; do
+fake_platform "$tmpdir/platform" apple-silicon
+for file in "$ROOT"/etc/mkinitcpio.conf.d/*.conf "$confd"/*.conf; do
   sed "s|/etc/vconsole.conf|$tmpdir/vconsole.conf|g" "$file" >"$tmpdir/confd/${file##*/}"
 done
-mapfile -t built < <(bash -c '
+mapfile -t built < <(OMARCHY_PROC_ROOT="$tmpdir/platform/proc" PATH="$tmpdir/platform/bin:$ROOT/bin:$PATH" bash -c '
   HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
-  FILES=()
-  for file in "$1"/9*.conf; do source "$file"; done
+  FILES=() MODULES=()
+  for file in "$1"/*.conf; do source "$file" || exit 1; done
   printf "%s\n" "${HOOKS[*]}" "${FILES[*]}"
 ' bash "$tmpdir/confd")
 [[ ${built[0]} == *"keyboard sd-vconsole"* && ${built[0]} != *" keymap "* ]] ||
   fail "the Danish Mac image loads KEYMAP through sd-vconsole" "HOOKS=(${built[0]})"
 [[ " ${built[1]} " == *" $tmpdir/vconsole.conf "* ]] ||
   fail "the Danish Mac image bundles vconsole.conf for Plymouth and sd-vconsole" "FILES=(${built[1]})"
-pass "the Mac initramfs drop-ins bundle a Danish vconsole.conf and load its KEYMAP with sd-vconsole"
+pass "the shared baseline bundles Danish vconsole.conf and the Apple chain loads its KEYMAP"
 
 # The built image, as lsinitcpio -x lays it out: what sd-vconsole and the
 # plymouth hook add for this vconsole.conf.
