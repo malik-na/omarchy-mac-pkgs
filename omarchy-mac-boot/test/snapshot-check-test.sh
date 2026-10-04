@@ -87,17 +87,26 @@ run_check() {
   set +e
   (
     eval "$(limine_mac_env "$ROOT/bin" "${TEST_UNAME:-}")"
-    local detector=$tmp/detector dir
+    local detector=$tmp/detector dir tool
     local -a kept=() dirs=()
     [[ -z ${TEST_NO_DETECTOR:-} ]] || detector=$tmp/no-detector
     export PATH="${TEST_PATH_FIRST:-$fake}:$fake:$detector:$PATH"
-    # A root without the detector must not find one further down PATH, such
-    # as the runtime's bin/ when the suite runs with OMARCHY_PATH/bin first.
+    # Hide the detector without losing standard tools in the same directory.
+    # On an installed Mac it shares /usr/bin with bash, grep and dirname.
     if [[ -n ${TEST_NO_DETECTOR:-} ]]; then
+      mkdir -p "$tmp/no-detector-tools"
       IFS=: read -r -a dirs <<<"$PATH"
       for dir in "${dirs[@]}"; do
-        [[ -e $dir/omarchy-hw-platform ]] || kept+=("$dir")
+        if [[ -e $dir/omarchy-hw-platform ]]; then
+          for tool in "$dir"/*; do
+            [[ -x $tool && ! -d $tool && ${tool##*/} != "omarchy-hw-platform" ]] || continue
+            [[ -e $tmp/no-detector-tools/${tool##*/} ]] || ln -s "$(realpath "$tool")" "$tmp/no-detector-tools/${tool##*/}"
+          done
+        else
+          kept+=("$dir")
+        fi
       done
+      kept+=("$tmp/no-detector-tools")
       PATH=$(IFS=:; printf '%s' "${kept[*]}")
     fi
     export CHECK_RAN="$tmp/check-ran" HOOK_CMDLINE="$hook_cmdline" OMARCHY_CMDLINE="$tmp/cmdline"
